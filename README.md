@@ -1,2 +1,2 @@
 # JavaUtils
-Java工具
+常用Java工具类
