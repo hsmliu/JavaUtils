@@ -1,13 +1,16 @@
-package com.example.redistest.util;
+package com.example.springboot_redis.util;
+
+import lombok.extern.log4j.Log4j2;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
 import javax.annotation.Resource;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.TimeUnit;
 
 
@@ -15,8 +18,10 @@ import java.util.concurrent.TimeUnit;
  * @author liu wen cheng
  * @date 2021/12/2 4:49 下午
  */
+
 @Component
-public final class RedisUtil {
+@Log4j2
+public class RedisUtil {
 
     @Resource
     private RedisTemplate<String, Object> redisTemplate;
@@ -34,7 +39,7 @@ public final class RedisUtil {
      * 指定缓存失效时间
      * @param key 键
      * @param time 时间(秒)
-     * @return
+     * @return true 成功 false 失败
      */
     public boolean expire(String key, long time) {
         try {
@@ -111,7 +116,7 @@ public final class RedisUtil {
      * @param value 值
      * @return true成功 false失败
      */
-    public boolean setnx(String key, Object value) {
+    public boolean setNx(String key, Object value) {
         try {
             redisTemplate.opsForValue().setIfAbsent(key,value);
             return true;
@@ -148,7 +153,7 @@ public final class RedisUtil {
      * @param time 时间(秒) time要大于0 如果time小于等于0 将设置无限期
      * @return true成功 false 失败
      */
-    public boolean setnx(String key, Object value, long time) {
+    public boolean setNx(String key, Object value, long time) {
         try {
             if (time > 0) {
                 redisTemplate.opsForValue().setIfAbsent(key, value, time, TimeUnit.SECONDS);
@@ -192,7 +197,7 @@ public final class RedisUtil {
      * @param item 项 不能为null
      * @return 值
      */
-    public Object hget(String key, String item) {
+    public Object hGet(String key, String item) {
         return redisTemplate.opsForHash().get(key, item);
     }
     /**
@@ -200,7 +205,7 @@ public final class RedisUtil {
      * @param key 键
      * @return 对应的多个键值
      */
-    public Map<Object, Object> hmget(String key) {
+    public Map<Object, Object> hmGet(String key) {
         return redisTemplate.opsForHash().entries(key);
     }
     /**
@@ -209,7 +214,7 @@ public final class RedisUtil {
      * @param map 对应多个键值
      * @return true 成功 false 失败
      */
-    public boolean hmset(String key, Map<String, Object> map) {
+    public boolean hmSet(String key, Map<String, Object> map) {
         try {
             redisTemplate.opsForHash().putAll(key, map);
             return true;
@@ -225,7 +230,7 @@ public final class RedisUtil {
      * @param time 时间(秒)
      * @return true成功 false失败
      */
-    public boolean hmset(String key, Map<String, Object> map, long time) {
+    public boolean hmSet(String key, Map<String, Object> map, long time) {
         try {
             redisTemplate.opsForHash().putAll(key, map);
             if (time > 0) {
@@ -244,7 +249,7 @@ public final class RedisUtil {
      * @param value 值
      * @return true 成功 false失败
      */
-    public boolean hset(String key, String item, Object value) {
+    public boolean hSet(String key, String item, Object value) {
         try {
             redisTemplate.opsForHash().put(key, item, value);
             return true;
@@ -261,7 +266,7 @@ public final class RedisUtil {
      * @param time 时间(秒) 注意:如果已存在的hash表有时间,这里将会替换原有的时间
      * @return true 成功 false失败
      */
-    public boolean hset(String key, String item, Object value, long time) {
+    public boolean hSet(String key, String item, Object value, long time) {
         try {
             redisTemplate.opsForHash().put(key, item, value);
             if (time > 0) {
@@ -278,7 +283,7 @@ public final class RedisUtil {
      * @param key 键 不能为null
      * @param item 项 可以使多个 不能为null
      */
-    public void hdel(String key, Object... item) {
+    public void hDel(String key, Object... item) {
         redisTemplate.opsForHash().delete(key, item);
     }
     /**
@@ -297,7 +302,7 @@ public final class RedisUtil {
      * @param by 要增加几(大于0)
      * @return
      */
-    public double hincr(String key, String item, double by) {
+    public double hIncr(String key, String item, double by) {
         return redisTemplate.opsForHash().increment(key, item, by);
     }
     /**
@@ -307,7 +312,7 @@ public final class RedisUtil {
      * @param by 要减少记(小于0)
      * @return
      */
-    public double hdecr(String key, String item, double by) {
+    public double hDecr(String key, String item, double by) {
         return redisTemplate.opsForHash().increment(key, item, -by);
     }
     /**
@@ -331,7 +336,7 @@ public final class RedisUtil {
      */
     public boolean sHasKey(String key, Object value) {
         try {
-            return redisTemplate.opsForSet().isMember(key, value);
+            return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(key, value));
         } catch (Exception e) {
             e.printStackTrace();
             return false;
@@ -536,10 +541,52 @@ public final class RedisUtil {
     public long lRemove(String key, long count, Object value) {
         try {
             Long remove = redisTemplate.opsForList().remove(key, count, value);
-            return remove;
+            if (remove != null){
+                return remove;
+            }
+            return -1;
         } catch (Exception e) {
             e.printStackTrace();
             return 0;
         }
+    }
+
+    // ===============================查询=================================
+
+    // 使用Scan命令查询Key，count限制不起作用，只能添加判断数量进行停止
+    // String matchKey = "XXX*";
+    public Set<String> scanKey(String pattern){
+        return redisTemplate.execute((RedisCallback<Set<String>>) connection -> {
+            Set<String> keySetTemp = new ConcurrentSkipListSet<>();
+            try (Cursor<byte[]> cursor = connection.scan(ScanOptions.scanOptions()
+                    .match(pattern)
+                    .count(1000)
+                    .build())) {
+                //while (cursor.hasNext() && keySetTemp.size() < size)  查询指定数量(size)的数据
+                while (cursor.hasNext()) {
+                    keySetTemp.add(new String(cursor.next(), "utf-8"));
+                }
+            } catch (Exception e) {
+                log.error("Redis Scan获取异常：{}", e.getMessage());
+                return new ConcurrentSkipListSet<>();
+            }
+            return keySetTemp;
+        });
+    }
+
+    // 官方提供这种是指定查找Hash这个Key里面的值
+    // String matchKey = "XXX*";
+    public Set<Object> scanValue(String matchKey){
+        Set<Object> values = new HashSet<>();
+        try (Cursor<Map.Entry<Object, Object>> cursor = redisTemplate.opsForHash().scan("HashKey",
+                ScanOptions.scanOptions().match(matchKey).count(10).build())) {
+            while (cursor.hasNext()) {
+                Object value = cursor.next().getValue();
+                values.add(value);
+            }
+        } catch (Exception e) {
+            log.error("Redis Hash Scan获取异常：{}", e.getMessage());
+        }
+        return values;
     }
 }
